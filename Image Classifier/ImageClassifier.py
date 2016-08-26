@@ -23,9 +23,16 @@ class ConvolutionalClassifier(object):
         self.cost = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(y_pred), reduction_indices=[1]))
         correct_prediction = tf.equal(tf.argmax(y_pred, 1), tf.argmax(self.y, 1))
         self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+        self.sess = tf.Session()
+
+        cost_summ = tf.scalar_summary("loss ", self.cost)
+        accuracy_summary = tf.scalar_summary("accuracy", self.accuracy)
+
+        # Merge all the summaries and write them out to /tmp/convClf_logs
+        self.merged = tf.merge_all_summaries()
+        self.writer = tf.train.SummaryWriter("/tmp/convClf_logs", self.sess.graph)
 
         init = tf.initialize_all_variables()
-        self.sess = tf.Session()
         self.sess.run(init)
 
     def _initialize_weights(self, img_channels, n_classes):
@@ -50,7 +57,11 @@ class ConvolutionalClassifier(object):
         return tf.nn.max_pool(x, ksize=[1, 2, 2, 1],
                               strides=[1, 2, 2, 1], padding='SAME')
 
-    def train(self, trX, trY, learning_rate=1e-3, batch_size=50, n_iters=100):
+    def score(self, X, y):
+        result = self.sess.run([self.accuracy, self.cost], feed_dict={self.x: X, self.y: y})
+        return result
+
+    def train(self, trX, trY, learning_rate=1e-3, batch_size=10, n_iters=100, start=0):
 
         train_step = tf.train.AdamOptimizer(learning_rate).minimize(self.cost)
         uninitialized_vars = []
@@ -62,7 +73,13 @@ class ConvolutionalClassifier(object):
 
         init_new_vars_op = tf.initialize_variables(uninitialized_vars)
         self.sess.run(init_new_vars_op)
+
         for i in xrange(n_iters):
             batch = np.random.randint(trX.shape[0], size=batch_size)
             self.sess.run(train_step, feed_dict={self.x: trX[batch], self.y: trY[batch]})
-            print (self.sess.run(self.accuracy, feed_dict={self.x: trX[batch], self.y: trY[batch]}))
+            if i % 10 == 0:
+                result = self.sess.run([self.merged, self.accuracy], feed_dict={self.x: trX[batch], self.y: trY[batch]})
+                summary_str = result[0]
+                acc = result[1]
+                self.writer.add_summary(summary_str, i+start)
+                print("Accuracy at step %s: %s" % (i+start, acc))
