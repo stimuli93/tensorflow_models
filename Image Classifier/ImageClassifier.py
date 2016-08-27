@@ -10,6 +10,7 @@ class ConvolutionalClassifier(object):
         self.weights = self._initialize_weights(img_channels=img_dims[2], n_classes=n_classes)
         self.x = tf.placeholder(tf.float32, shape=[None, img_dims[0], img_dims[1], img_dims[2]], name="x_image")
         self.y = tf.placeholder(tf.float32, shape=[None, n_classes])
+        self.keep_prob = tf.placeholder(tf.float32)
 
         h_conv1 = tf.nn.relu(self.conv2d(self.x, self.weights['W_conv1']) + self.weights['b_conv1'])
         h_pool1 = self.max_pool_2x2(h_conv1)
@@ -18,11 +19,16 @@ class ConvolutionalClassifier(object):
         h_conv3 = tf.nn.relu(self.conv2d(h_pool2, self.weights['W_conv3']) + self.weights['b_conv3'])
         h_pool3 = self.max_pool_2x2(h_conv3)
 
-        h_pool3_flat = tf.reshape(h_pool3, [-1, 16*16*32])
+        h_pool3_flat = tf.reshape(h_pool3, [-1, 16*16*16])
         h_fc1 = tf.nn.relu(tf.matmul(h_pool3_flat, self.weights['W_fc1']) + self.weights['b_fc1'])
-        y_pred = tf.nn.softmax(tf.matmul(h_fc1, self.weights['W_fc2']) + self.weights['b_fc2'])
-        self.cost = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(y_pred), reduction_indices=[1]))
-        correct_prediction = tf.equal(tf.argmax(y_pred, 1), tf.argmax(self.y, 1))
+        h_fc1_drop = tf.nn.dropout(h_fc1, self.keep_prob)
+        h_fc2 = tf.nn.relu(tf.matmul(h_fc1_drop, self.weights['W_fc2']) + self.weights['b_fc2'])
+        h_fc2_drop = tf.nn.dropout(h_fc2, self.keep_prob)
+        self.y_pred = tf.nn.softmax(tf.matmul(h_fc2_drop, self.weights['W_fc3']) + self.weights['b_fc3'])
+
+        self.cost = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.y_pred), reduction_indices=[1]))
+
+        correct_prediction = tf.equal(tf.argmax(self.y_pred, 1), tf.argmax(self.y, 1))
         self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         self.sess = tf.InteractiveSession()
 
@@ -47,16 +53,18 @@ class ConvolutionalClassifier(object):
 
     def _initialize_weights(self, img_channels, n_classes):
         all_weights = dict()
-        all_weights['W_conv1'] = tf.Variable(tf.truncated_normal(shape=[3, 3, img_channels, 8], stddev=0.1))
-        all_weights['b_conv1'] = tf.Variable(tf.constant(0.1, shape=[8]))
-        all_weights['W_conv2'] = tf.Variable(tf.truncated_normal(shape=[3, 3, 8, 16], stddev=0.1))
-        all_weights['b_conv2'] = tf.Variable(tf.constant(0.1, shape=[16]))
-        all_weights['W_conv3'] = tf.Variable(tf.truncated_normal(shape=[3, 3, 16, 32], stddev=0.1))
-        all_weights['b_conv3'] = tf.Variable(tf.constant(0.1, shape=[32]))
-        all_weights['W_fc1'] = tf.Variable(tf.truncated_normal(shape=[16*16*32, 64], stddev=0.1))
-        all_weights['b_fc1'] = tf.Variable(tf.constant(0.1, shape=[64]))
-        all_weights['W_fc2'] = tf.Variable(tf.truncated_normal(shape=[64, n_classes], stddev=0.1))
-        all_weights['b_fc2'] = tf.Variable(tf.constant(0.1, shape=[n_classes]))
+        all_weights['W_conv1'] = tf.Variable(tf.truncated_normal(shape=[3, 3, img_channels, 4], stddev=0.1))
+        all_weights['b_conv1'] = tf.Variable(tf.constant(0.1, shape=[4]))
+        all_weights['W_conv2'] = tf.Variable(tf.truncated_normal(shape=[3, 3, 4, 8], stddev=0.1))
+        all_weights['b_conv2'] = tf.Variable(tf.constant(0.1, shape=[8]))
+        all_weights['W_conv3'] = tf.Variable(tf.truncated_normal(shape=[3, 3, 8, 16], stddev=0.1))
+        all_weights['b_conv3'] = tf.Variable(tf.constant(0.1, shape=[16]))
+        all_weights['W_fc1'] = tf.Variable(tf.truncated_normal(shape=[16*16*16, 512], stddev=0.1))
+        all_weights['b_fc1'] = tf.Variable(tf.constant(0.1, shape=[512]))
+        all_weights['W_fc2'] = tf.Variable(tf.truncated_normal(shape=[512, 64], stddev=0.1))
+        all_weights['b_fc2'] = tf.Variable(tf.constant(0.1, shape=[64]))
+        all_weights['W_fc3'] = tf.Variable(tf.truncated_normal(shape=[64, n_classes], stddev=0.1))
+        all_weights['b_fc3'] = tf.Variable(tf.constant(0.1, shape=[n_classes]))
 
         return all_weights
 
@@ -68,10 +76,14 @@ class ConvolutionalClassifier(object):
                               strides=[1, 2, 2, 1], padding='SAME')
 
     def score(self, X, y):
-        result = self.sess.run([self.accuracy, self.cost], feed_dict={self.x: X, self.y: y})
+        result = self.sess.run([self.accuracy, self.cost], feed_dict={self.x: X, self.y: y, self.keep_prob: 1.0})
         return result
 
-    def train(self, trX, trY, learning_rate=1e-3, batch_size=10, n_iters=100):
+    def predict(self, X):
+        pred = self.sess.run(self.y_pred, feed_dict={self.x:X, self.keep_prob: 1.0})
+        return pred
+
+    def train(self, trX, trY, learning_rate=1e-3, batch_size=10, n_iters=100, keep_prob=0.5):
 
         train_step = tf.train.AdamOptimizer(learning_rate).minimize(self.cost)
         uninitialized_vars = []
@@ -93,9 +105,10 @@ class ConvolutionalClassifier(object):
         start = self.global_step.eval()  # get last global_step
         for i in xrange(n_iters):
             batch = np.random.randint(trX.shape[0], size=batch_size)
-            self.sess.run(train_step, feed_dict={self.x: trX[batch], self.y: trY[batch]})
+            self.sess.run(train_step, feed_dict={self.x: trX[batch], self.y: trY[batch], self.keep_prob: keep_prob})
             if i % 10 == 0:
-                result = self.sess.run([self.merged, self.cost], feed_dict={self.x: trX[batch], self.y: trY[batch]})
+                result = self.sess.run([self.merged, self.cost],
+                                       feed_dict={self.x: trX[batch], self.y: trY[batch], self.keep_prob: 1.0})
                 summary_str = result[0]
                 loss = result[1]
                 self.writer.add_summary(summary_str, i+start)
