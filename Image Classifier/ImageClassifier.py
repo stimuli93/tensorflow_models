@@ -4,10 +4,13 @@ import os
 
 
 class ConvolutionalClassifier(object):
-    def __init__(self, n_classes=2):
-
-        img_dims = (128, 128, 3)
-        self.weights = self._initialize_weights(img_channels=img_dims[2], n_classes=n_classes)
+    def __init__(self, img_dims, n_classes=2):
+        """
+        :param img_dims: a tuple of (width, heigh, channel) of input image.
+        Image width/height expected to be multiples of 8
+        :param n_classes: number of output categories
+        """
+        self.weights = self._initialize_weights(img_dims=img_dims, n_classes=n_classes)
         self.x = tf.placeholder(tf.float32, shape=[None, img_dims[0], img_dims[1], img_dims[2]], name="x_image")
         self.y = tf.placeholder(tf.float32, shape=[None, n_classes])
         self.keep_prob = tf.placeholder(tf.float32)
@@ -19,7 +22,7 @@ class ConvolutionalClassifier(object):
         h_conv3 = tf.nn.relu(self.conv2d(h_pool2, self.weights['W_conv3']) + self.weights['b_conv3'])
         h_pool3 = self.max_pool_2x2(h_conv3)
 
-        h_pool3_flat = tf.reshape(h_pool3, [-1, 16*16*16])
+        h_pool3_flat = tf.reshape(h_pool3, [-1, (img_dims[0]//8)*(img_dims[1]//8)*16])
         h_fc1 = tf.nn.relu(tf.matmul(h_pool3_flat, self.weights['W_fc1']) + self.weights['b_fc1'])
         h_fc1_drop = tf.nn.dropout(h_fc1, self.keep_prob)
         h_fc2 = tf.nn.relu(tf.matmul(h_fc1_drop, self.weights['W_fc2']) + self.weights['b_fc2'])
@@ -51,17 +54,18 @@ class ConvolutionalClassifier(object):
         init = tf.initialize_all_variables()
         self.sess.run(init)
 
-    def _initialize_weights(self, img_channels, n_classes):
+    def _initialize_weights(self, img_dims, n_classes):
         all_weights = dict()
-        all_weights['W_conv1'] = tf.Variable(tf.truncated_normal(shape=[3, 3, img_channels, 4], stddev=0.1))
+        all_weights['W_conv1'] = tf.Variable(tf.truncated_normal(shape=[3, 3, img_dims[2], 4], stddev=0.1))
         all_weights['b_conv1'] = tf.Variable(tf.constant(0.1, shape=[4]))
         all_weights['W_conv2'] = tf.Variable(tf.truncated_normal(shape=[3, 3, 4, 8], stddev=0.1))
         all_weights['b_conv2'] = tf.Variable(tf.constant(0.1, shape=[8]))
         all_weights['W_conv3'] = tf.Variable(tf.truncated_normal(shape=[3, 3, 8, 16], stddev=0.1))
         all_weights['b_conv3'] = tf.Variable(tf.constant(0.1, shape=[16]))
-        all_weights['W_fc1'] = tf.Variable(tf.truncated_normal(shape=[16*16*16, 512], stddev=0.1))
-        all_weights['b_fc1'] = tf.Variable(tf.constant(0.1, shape=[512]))
-        all_weights['W_fc2'] = tf.Variable(tf.truncated_normal(shape=[512, 64], stddev=0.1))
+        all_weights['W_fc1'] = tf.Variable(tf.truncated_normal(shape=[(img_dims[0]//8)*(img_dims[1]//8)*16, 256],
+                                                               stddev=0.1))
+        all_weights['b_fc1'] = tf.Variable(tf.constant(0.1, shape=[256]))
+        all_weights['W_fc2'] = tf.Variable(tf.truncated_normal(shape=[256, 64], stddev=0.1))
         all_weights['b_fc2'] = tf.Variable(tf.constant(0.1, shape=[64]))
         all_weights['W_fc3'] = tf.Variable(tf.truncated_normal(shape=[64, n_classes], stddev=0.1))
         all_weights['b_fc3'] = tf.Variable(tf.constant(0.1, shape=[n_classes]))
