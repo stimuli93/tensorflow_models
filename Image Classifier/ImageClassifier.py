@@ -27,7 +27,7 @@ class ConvolutionalClassifier(object):
         h_fc1_drop = tf.nn.dropout(h_fc1, self.keep_prob)
         h_fc2 = tf.nn.relu(tf.matmul(h_fc1_drop, self.weights['W_fc2']) + self.weights['b_fc2'])
         h_fc2_drop = tf.nn.dropout(h_fc2, self.keep_prob)
-        self.y_pred = tf.nn.softmax(tf.matmul(h_fc2_drop, self.weights['W_fc3']) + self.weights['b_fc3'])
+        self.y_pred = tf.nn.softmax(tf.matmul(h_fc2_drop, self.weights['W_fc3']) + self.weights['b_fc3']) + 1e-8
 
         self.cost = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.y_pred), reduction_indices=[1]))
 
