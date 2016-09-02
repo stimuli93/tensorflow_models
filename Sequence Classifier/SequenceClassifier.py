@@ -3,17 +3,19 @@ import numpy as np
 
 
 class LstmClassifier(object):
-    def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128, num_layers=2):
+    def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128,
+                 batch_size=50):
         self.weights = self._initialize_weights(vocab_size, num_classes, embedding_size, hidden_size)
         self.x = tf.placeholder(tf.int32, shape=[None, max_seq_length])
-        self.y = tf.placeholder(shape=[None, num_classes])
+        self.y = tf.placeholder(tf.float32, shape=[None, num_classes])
+        self.batch_size = batch_size
 
         token_embedings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
-        single_cell = tf.nn.rnn_cell.LSTMCell(hidden_size, initializer=tf.truncated_normal_initializer(stddev=0.1))
-        self.cell = tf.nn.rnn_cell.MultiRNNCell([single_cell] * num_layers)
 
         with tf.variable_scope("lstm") as scope:
-            initial_state = tf.Variable(tf.zeros([None, self.cell.state_size]))
+            self.cell = tf.nn.rnn_cell.BasicLSTMCell(hidden_size, state_is_tuple=True)
+            initial_state = self.cell.zero_state(batch_size, tf.float32)
+
             outputs = []
             states = [initial_state]
             for i in range(max_seq_length):
@@ -26,7 +28,7 @@ class LstmClassifier(object):
             self.final_state = states[-1]
             self.final_output = outputs[-1]
 
-        self.y_pred = tf.nn.softmax(tf.matmul(self.final_state, self.weights['W']) + self.weights['b']) + 1e-8
+        self.y_pred = tf.nn.softmax(tf.matmul(self.final_state[0], self.weights['W']) + self.weights['b']) + 1e-8
         self.cost = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.y_pred), reduction_indices=[1]))
 
         correct_prediction = tf.equal(tf.argmax(self.y_pred, 1), tf.argmax(self.y, 1))
@@ -48,7 +50,7 @@ class LstmClassifier(object):
         pred = self.sess.run(self.y_pred, feed_dict={self.x: X})
         return pred
 
-    def train(self, trX, trY, learning_rate=1e-3, batch_size=10, n_iters=100):
+    def train(self, trX, trY, learning_rate=1e-3, n_iters=100):
 
         train_step = tf.train.AdamOptimizer(learning_rate).minimize(self.cost)
         uninitialized_vars = []
@@ -62,7 +64,7 @@ class LstmClassifier(object):
         self.sess.run(init_new_vars_op)
 
         for i in xrange(n_iters):
-            batch = np.random.randint(trX.shape[0], size=batch_size)
+            batch = np.random.randint(trX.shape[0], size=self.batch_size)
             self.sess.run(train_step, feed_dict={self.x: trX[batch], self.y: trY[batch]})
             if i % 10 == 0:
                 result = self.sess.run([self.cost],
