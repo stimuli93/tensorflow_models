@@ -3,17 +3,20 @@ import numpy as np
 
 
 class LstmClassifier(object):
-    def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128,
+    def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128, keep_prob=0.5,
                  batch_size=50):
         self.weights = self._initialize_weights(vocab_size, num_classes, embedding_size, hidden_size)
         self.x = tf.placeholder(tf.int32, shape=[None, max_seq_length])
         self.y = tf.placeholder(tf.float32, shape=[None, num_classes])
         self.batch_size = batch_size
+        self.keep_prob = keep_prob
+        self.num_classes = num_classes
 
         token_embedings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
 
         with tf.variable_scope("lstm") as scope:
-            self.cell = tf.nn.rnn_cell.BasicLSTMCell(hidden_size, state_is_tuple=True)
+            self.cell = tf.nn.rnn_cell.DropoutWrapper(tf.nn.rnn_cell.BasicLSTMCell(hidden_size, state_is_tuple=True),
+                                                      input_keep_prob=self.keep_prob, output_keep_prob=self.keep_prob)
             initial_state = self.cell.zero_state(batch_size, tf.float32)
 
             outputs = []
@@ -56,12 +59,13 @@ class LstmClassifier(object):
             return result
         return np.array(result)/denominator
 
-    def predict(self, X):
-        pred = []
+    def predict_prob(self, X):
+        pred = np.zeros(dtype=np.float64, shape=[X.shape[0], self.num_classes])
         lim = X.shape[0] - self.batch_size + 1
         for i in range(0, lim, self.batch_size):
             itr_pred = self.sess.run(self.y_pred, feed_dict={self.x: X[i:i+self.batch_size]})
-            pred += itr_pred
+            pred[i:i+self.batch_size] = np.array(itr_pred).reshape([self.batch_size, self.num_classes])
+
         return pred
 
     def train(self, trX, trY, learning_rate=1e-3, n_iters=100):
