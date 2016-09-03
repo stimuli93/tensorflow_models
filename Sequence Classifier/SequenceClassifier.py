@@ -43,11 +43,25 @@ class LstmClassifier(object):
         return all_weights
 
     def score(self, X, y):
-        result = self.sess.run([self.accuracy, self.cost], feed_dict={self.x: X, self.y: y})
-        return result
+        result = np.array([0.0, 0.0], dtype=np.float64)
+        denominator = 0
+        lim = X.shape[0] - self.batch_size + 1
+        for i in range(0, lim, self.batch_size):
+            itr_result = self.sess.run([self.accuracy, self.cost], feed_dict={self.x: X[i:i+self.batch_size],
+                                                                              self.y: y[i:i+self.batch_size]})
+            result += np.array(itr_result)
+            denominator += 1
+
+        if denominator == 0:
+            return result
+        return np.array(result)/denominator
 
     def predict(self, X):
-        pred = self.sess.run(self.y_pred, feed_dict={self.x: X})
+        pred = []
+        lim = X.shape[0] - self.batch_size + 1
+        for i in range(0, lim, self.batch_size):
+            itr_pred = self.sess.run(self.y_pred, feed_dict={self.x: X[i:i+self.batch_size]})
+            pred += itr_pred
         return pred
 
     def train(self, trX, trY, learning_rate=1e-3, n_iters=100):
