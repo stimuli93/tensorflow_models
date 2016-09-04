@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import os
 
 
 class LstmClassifier(object):
@@ -37,6 +38,25 @@ class LstmClassifier(object):
         correct_prediction = tf.equal(tf.argmax(self.y_pred, 1), tf.argmax(self.y, 1))
         self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         self.sess = tf.InteractiveSession()
+
+        cost_summ = tf.scalar_summary("loss ", self.cost)
+        accuracy_summary = tf.scalar_summary("accuracy", self.accuracy)
+
+        # Merge all the summaries and write them out to /tmp/convClf_logs
+        self.merged = tf.merge_all_summaries()
+        self.writer = tf.train.SummaryWriter("/tmp/lstmClf_logs", self.sess.graph)
+
+        ckpt_dir = "./ckpt_dir"
+        if not os.path.exists(ckpt_dir):
+            os.makedirs(ckpt_dir)
+
+        self.global_step = tf.Variable(0, name='global_step', trainable=False)
+
+        # Call this after declaring all tf.Variables.
+        self.saver = tf.train.Saver()
+
+        init = tf.initialize_all_variables()
+        self.sess.run(init)
 
     def _initialize_weights(self, vocab_size, num_classes, embedding_size, hidden_size):
         all_weights = dict()
@@ -81,11 +101,24 @@ class LstmClassifier(object):
         init_new_vars_op = tf.initialize_variables(uninitialized_vars)
         self.sess.run(init_new_vars_op)
 
+        ckpt_dir = "./ckpt_dir"
+        ckpt = tf.train.get_checkpoint_state(ckpt_dir)
+        if ckpt and ckpt.model_checkpoint_path:
+            print(ckpt.model_checkpoint_path)
+            self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
+
+        start = self.global_step.eval()  # get last global_step
+
         for i in xrange(n_iters):
             batch = np.random.randint(trX.shape[0], size=self.batch_size)
             self.sess.run(train_step, feed_dict={self.x: trX[batch], self.y: trY[batch]})
             if i % 10 == 0:
-                result = self.sess.run([self.cost],
+                result = self.sess.run([self.merged, self.cost],
                                        feed_dict={self.x: trX[batch], self.y: trY[batch]})
-                print("Loss at step %s: %s" % (i, result))
-
+                summary_str = result[0]
+                loss = result[1]
+                self.writer.add_summary(summary_str, i + start)
+                print("Loss at step %s: %s" % (i + start, loss))
+                if i % 100 == 0:
+                    self.global_step.assign(i + start).eval()  # set and update(eval) global_step with index, i
+                    self.saver.save(self.sess, "./ckpt_dir/model.ckpt", global_step=self.global_step)
