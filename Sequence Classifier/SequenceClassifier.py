@@ -5,13 +5,15 @@ import os
 
 class LstmClassifier(object):
     def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128, keep_prob=0.5,
-                 batch_size=50):
+                 batch_size=50, ckpt_dir="./ckpt_dir", summary_dir="/tmp/lstmClf_logs"):
         self.weights = self._initialize_weights(vocab_size, num_classes, embedding_size, hidden_size)
         self.x = tf.placeholder(tf.int32, shape=[None, max_seq_length])
         self.y = tf.placeholder(tf.float32, shape=[None, num_classes])
         self.batch_size = batch_size
         self.keep_prob = keep_prob
         self.num_classes = num_classes
+        self.ckpt_dir = ckpt_dir
+        self.summary_dir = summary_dir
 
         token_embedings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
 
@@ -44,11 +46,10 @@ class LstmClassifier(object):
 
         # Merge all the summaries and write them out to /tmp/convClf_logs
         self.merged = tf.merge_all_summaries()
-        self.writer = tf.train.SummaryWriter("/tmp/lstmClf_logs", self.sess.graph)
+        self.writer = tf.train.SummaryWriter(self.summary_dir, self.sess.graph)
 
-        ckpt_dir = "./ckpt_dir"
-        if not os.path.exists(ckpt_dir):
-            os.makedirs(ckpt_dir)
+        if not os.path.exists(self.ckpt_dir):
+            os.makedirs(self.ckpt_dir)
 
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
 
@@ -80,8 +81,7 @@ class LstmClassifier(object):
         return np.array(result)/denominator
 
     def predict_prob(self, X):
-        ckpt_dir = "./ckpt_dir"
-        ckpt = tf.train.get_checkpoint_state(ckpt_dir)
+        ckpt = tf.train.get_checkpoint_state(self.ckpt_dir)
         if ckpt and ckpt.model_checkpoint_path:
             print(ckpt.model_checkpoint_path)
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
@@ -107,8 +107,7 @@ class LstmClassifier(object):
         init_new_vars_op = tf.initialize_variables(uninitialized_vars)
         self.sess.run(init_new_vars_op)
 
-        ckpt_dir = "./ckpt_dir"
-        ckpt = tf.train.get_checkpoint_state(ckpt_dir)
+        ckpt = tf.train.get_checkpoint_state(self.ckpt_dir)
         if ckpt and ckpt.model_checkpoint_path:
             print(ckpt.model_checkpoint_path)
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
@@ -127,4 +126,4 @@ class LstmClassifier(object):
                 print("Loss at step %s: %s" % (i + start, loss))
                 if i % 100 == 0:
                     self.global_step.assign(i + start).eval()  # set and update(eval) global_step with index, i
-                    self.saver.save(self.sess, "./ckpt_dir/model.ckpt", global_step=self.global_step)
+                    self.saver.save(self.sess, self.ckpt_dir+"/model.ckpt", global_step=self.global_step)
