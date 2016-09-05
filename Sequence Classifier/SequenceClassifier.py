@@ -80,6 +80,12 @@ class LstmClassifier(object):
         return np.array(result)/denominator
 
     def predict_prob(self, X):
+        ckpt_dir = "./ckpt_dir"
+        ckpt = tf.train.get_checkpoint_state(ckpt_dir)
+        if ckpt and ckpt.model_checkpoint_path:
+            print(ckpt.model_checkpoint_path)
+            self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
+
         pred = np.zeros(dtype=np.float64, shape=[X.shape[0], self.num_classes])
         lim = X.shape[0] - self.batch_size + 1
         for i in range(0, lim, self.batch_size):
