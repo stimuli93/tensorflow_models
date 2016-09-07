@@ -4,23 +4,25 @@ import os
 
 
 class LstmClassifier(object):
-    def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128, keep_prob=0.5,
+    def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128,
                  batch_size=50, ckpt_dir="./ckpt_dir", summary_dir="/tmp/lstmClf_logs"):
         self.weights = self._initialize_weights(vocab_size, num_classes, embedding_size, hidden_size)
         self.x = tf.placeholder(tf.int32, shape=[None, max_seq_length])
         self.y = tf.placeholder(tf.float32, shape=[None, num_classes])
+        self.keep_prob = tf.placeholder(tf.float32)
+
         self.batch_size = batch_size
-        self.keep_prob = keep_prob
         self.num_classes = num_classes
         self.ckpt_dir = ckpt_dir
         self.summary_dir = summary_dir
 
         token_embedings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
+        token_embedings = tf.nn.dropout(token_embedings, keep_prob=self.keep_prob)
 
         with tf.variable_scope("lstm") as scope:
             self.cell = tf.nn.rnn_cell.DropoutWrapper(tf.nn.rnn_cell.LSTMCell(hidden_size, state_is_tuple=True,
                                                                               use_peepholes=True),
-                                                      input_keep_prob=self.keep_prob, output_keep_prob=self.keep_prob)
+                                                      output_keep_prob=self.keep_prob)
             initial_state = self.cell.zero_state(batch_size, tf.float32)
 
             outputs = []
@@ -73,7 +75,8 @@ class LstmClassifier(object):
         lim = X.shape[0] - self.batch_size + 1
         for i in range(0, lim, self.batch_size):
             itr_result = self.sess.run([self.accuracy, self.cost], feed_dict={self.x: X[i:i+self.batch_size],
-                                                                              self.y: y[i:i+self.batch_size]})
+                                                                              self.y: y[i:i+self.batch_size],
+                                                                              self.keep_prob: 1.0})
             result += np.array(itr_result)
             denominator += 1
 
@@ -90,16 +93,12 @@ class LstmClassifier(object):
         pred = np.zeros(dtype=np.float64, shape=[X.shape[0], self.num_classes])
         lim = X.shape[0] - self.batch_size + 1
         for i in range(0, lim, self.batch_size):
-            itr_pred = self.sess.run(self.y_pred, feed_dict={self.x: X[i:i+self.batch_size]})
+            itr_pred = self.sess.run(self.y_pred, feed_dict={self.x: X[i:i+self.batch_size], self.keep_prob: 1.0})
             pred[i:i+self.batch_size] = np.array(itr_pred).reshape([self.batch_size, self.num_classes])
 
         return pred
 
-    def replace_with_unknown_token(self, X, unknown_token_id, replace_with_unknown_prob):
-        X[np.random.rand(*X.shape) < replace_with_unknown_prob] = unknown_token_id
-        return X
-
-    def train(self, trX, trY, learning_rate=1e-3, n_iters=100, unknown_token_id=None, replace_with_unknown_prob=0.0):
+    def train(self, trX, trY, learning_rate=1e-3, n_iters=100, keep_prob=0.8):
 
         train_step = tf.train.AdamOptimizer(learning_rate).minimize(self.cost)
         uninitialized_vars = []
@@ -121,13 +120,10 @@ class LstmClassifier(object):
 
         for i in xrange(n_iters):
             batch = np.random.randint(trX.shape[0], size=self.batch_size)
-            X = trX[batch]
-            if unknown_token_id is not None:
-                X = self.replace_with_unknown_token(X, unknown_token_id, replace_with_unknown_prob)
-            self.sess.run(train_step, feed_dict={self.x: X, self.y: trY[batch]})
+            self.sess.run(train_step, feed_dict={self.x: trX[batch], self.y: trY[batch], self.keep_prob: keep_prob})
             if i % 10 == 0:
                 result = self.sess.run([self.merged, self.cost],
-                                       feed_dict={self.x: X, self.y: trY[batch]})
+                                       feed_dict={self.x: trX[batch], self.y: trY[batch], self.keep_prob: 1.0})
                 summary_str = result[0]
                 loss = result[1]
                 self.writer.add_summary(summary_str, i + start)
