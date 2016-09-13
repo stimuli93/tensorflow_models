@@ -16,7 +16,7 @@ class MLP(object):
         layers.append(n_classes)
         self.weights = self.initialize_weights(layers)
         self.x = tf.placeholder(tf.float32, shape=[None, input_dim])
-        self.y = tf.placeholder(tf.int32, shape=[None, n_classes])
+        self.y = tf.placeholder(tf.float32, shape=[None, n_classes])
         self.reg = tf.placeholder(tf.float32)
 
         prev_layer = self.x
@@ -46,3 +46,25 @@ class MLP(object):
             all_weights['W' + str(i)] = tf.Variable(tf.truncated_normal(shape=[layers[i-1], layers[i]], stddev=0.1))
             all_weights['b' + str(i)] = tf.Variable(tf.constant(0.1, dtype=tf.float32, shape=[layers[i]]))
         return all_weights
+
+    def train(self, trX, trY, learning_rate=1e-3, batch_size=100, reg=1e-4, n_iters=1000):
+        train_step = tf.train.AdamOptimizer(learning_rate).minimize(self.cost)
+
+        # initializing only un-initialized variables
+        uninitialized_vars = []
+        for var in tf.all_variables():
+            try:
+                self.sess.run(var)
+            except tf.errors.FailedPreconditionError:
+                uninitialized_vars.append(var)
+
+        init_new_vars_op = tf.initialize_variables(uninitialized_vars)
+        self.sess.run(init_new_vars_op)
+        for i in xrange(n_iters):
+            batch = np.random.randint(trX.shape[0], size=batch_size)
+            self.sess.run(train_step, feed_dict={self.x: trX[batch], self.y: trY[batch], self.reg: reg})
+            if i % 10 == 0:
+                loss = self.sess.run([self.cost],
+                                     feed_dict={self.x: trX[batch], self.y: trY[batch], self.reg: reg})
+                print("Loss at step %s: %s" % (i, loss))
+
