@@ -1,13 +1,16 @@
 import tensorflow as tf
 import numpy as np
+import os
 
 
 class MLP(object):
-    def __init__(self, input_dim, hidden_layers, n_classes):
+    def __init__(self, input_dim, hidden_layers, n_classes, ckpt_dir="./ckpt_dir", summary_dir="/tmp/MLP_logs"):
         """
         :param input_dim: dimension of feature vector
         :param hidden_layers: list of sizes of hidden layers
         :param n_classes: number of output classes
+        :param ckpt_dir: directory in which model checkpoints to be stored
+        :param summary_dir: directory used as logdir for tensoboard visualization
         """
         layers = list()
         layers.append(input_dim)
@@ -20,6 +23,8 @@ class MLP(object):
         self.x = tf.placeholder(tf.float32, shape=[None, input_dim])
         self.y = tf.placeholder(tf.float32, shape=[None, n_classes])
         self.reg = tf.placeholder(tf.float32)
+        self.ckpt_dir = ckpt_dir
+        self.summary_dir = summary_dir
 
         prev_layer = self.x
         n_layers = len(layers)
@@ -39,7 +44,24 @@ class MLP(object):
         correct_prediction = tf.equal(tf.argmax(self.y_pred, 1), tf.argmax(self.y, 1))
         self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         self.sess = tf.InteractiveSession()
-        self.sess.run(tf.initialize_all_tables())
+
+        cost_summ = tf.scalar_summary("loss ", self.cost)
+        accuracy_summary = tf.scalar_summary("accuracy", self.accuracy)
+
+        # Merge all the summaries and write them out to /tmp/convClf_logs
+        self.merged = tf.merge_all_summaries()
+        self.writer = tf.train.SummaryWriter(self.summary_dir, self.sess.graph)
+
+        if not os.path.exists(self.ckpt_dir):
+            os.makedirs(self.ckpt_dir)
+
+        self.global_step = tf.Variable(0, name='global_step', trainable=False)
+
+        # Call this after declaring all tf.Variables.
+        self.saver = tf.train.Saver()
+
+        init = tf.initialize_all_variables()
+        self.sess.run(init)
 
     def initialize_weights(self, layers):
         n_layers = len(layers)
@@ -50,10 +72,22 @@ class MLP(object):
         return all_weights
 
     def score(self, trX, trY, reg=1e-4):
+        """
+            :param trX: training features
+            :param trY: training labels
+            :param reg: regularization to be used for cost computation
+            :return: accuracy & cost on the given data
+            """
         result = self.sess.run([self.cost, self.accuracy], feed_dict={self.x: trX, self.y: trY, self.reg: reg})
         return result
 
     def predict(self, trX):
+        # Restore model before predicting labels for given data
+        ckpt = tf.train.get_checkpoint_state(self.ckpt_dir)
+        if ckpt and ckpt.model_checkpoint_path:
+            print(ckpt.model_checkpoint_path)
+            self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
+
         pred = self.sess.run([self.y_pred], feed_dict={self.x: trX})
         return np.array(pred).reshape([-1, self.n_classes])
 
@@ -70,11 +104,26 @@ class MLP(object):
 
         init_new_vars_op = tf.initialize_variables(uninitialized_vars)
         self.sess.run(init_new_vars_op)
+
+        # restore model
+        ckpt = tf.train.get_checkpoint_state(self.ckpt_dir)
+        if ckpt and ckpt.model_checkpoint_path:
+            print(ckpt.model_checkpoint_path)
+            self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
+
+        start = self.global_step.eval()  # get last global_step
+
         for i in xrange(n_iters):
             batch = np.random.randint(trX.shape[0], size=batch_size)
             self.sess.run(train_step, feed_dict={self.x: trX[batch], self.y: trY[batch], self.reg: reg})
             if i % 10 == 0:
-                loss = self.sess.run([self.cost],
-                                     feed_dict={self.x: trX[batch], self.y: trY[batch], self.reg: reg})
-                print("Loss at step %s: %s" % (i, loss))
+                result = self.sess.run([self.merged, self.cost],
+                                       feed_dict={self.x: trX[batch], self.y: trY[batch], self.reg: reg})
+                summary_str = result[0]
+                loss = result[1]
+                self.writer.add_summary(summary_str, i + start)
+                print("Loss at step %s: %s" % (i + start, loss))
+                if i % 100 == 0:
+                    self.global_step.assign(i + start).eval()  # set and update(eval) global_step with index, i
+                    self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
 
