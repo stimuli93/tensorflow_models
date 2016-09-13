@@ -6,9 +6,21 @@ import os
 class LstmClassifier(object):
     def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128,
                  batch_size=50, ckpt_dir="./ckpt_dir", summary_dir="/tmp/lstmClf_logs"):
+        """
+        :param vocab_size: vocabulary size
+        :param num_classes: no. of output classes
+        :param max_seq_length: number of words in a single training example
+        :param embedding_size: size of embedding
+        :param hidden_size: size of hidden unit of lstm
+        :param batch_size: no. of training samples to be trained in one iteration
+        :param ckpt_dir: directory in which model checkpoints to be stored
+        :param summary_dir: directory used as logdir for tensoboard visualization
+        """
         self.weights = self._initialize_weights(vocab_size, num_classes, embedding_size, hidden_size)
         self.x = tf.placeholder(tf.int32, shape=[None, max_seq_length])
         self.y = tf.placeholder(tf.float32, shape=[None, num_classes])
+
+        # keep_prob is less than 1.0 only during training
         self.keep_prob = tf.placeholder(tf.float32)
 
         self.batch_size = batch_size
@@ -70,6 +82,11 @@ class LstmClassifier(object):
         return all_weights
 
     def score(self, X, y):
+        """
+        :param X: training features
+        :param y: training labels
+        :return: accuracy & cost on the given data
+        """
         result = np.array([0.0, 0.0], dtype=np.float64)
         denominator = 0
         lim = X.shape[0] - self.batch_size + 1
@@ -85,6 +102,7 @@ class LstmClassifier(object):
         return np.array(result)/denominator
 
     def predict_prob(self, X):
+        # Restore model before predicting labels for given data
         ckpt = tf.train.get_checkpoint_state(self.ckpt_dir)
         if ckpt and ckpt.model_checkpoint_path:
             print(ckpt.model_checkpoint_path)
@@ -101,6 +119,8 @@ class LstmClassifier(object):
     def train(self, trX, trY, learning_rate=1e-3, n_iters=100, keep_prob=0.8):
 
         train_step = tf.train.AdamOptimizer(learning_rate).minimize(self.cost)
+
+        # initializing only un-initialized variables to prevent trained variables assigned again with random weights
         uninitialized_vars = []
         for var in tf.all_variables():
             try:
@@ -111,6 +131,7 @@ class LstmClassifier(object):
         init_new_vars_op = tf.initialize_variables(uninitialized_vars)
         self.sess.run(init_new_vars_op)
 
+        # restore model
         ckpt = tf.train.get_checkpoint_state(self.ckpt_dir)
         if ckpt and ckpt.model_checkpoint_path:
             print(ckpt.model_checkpoint_path)
