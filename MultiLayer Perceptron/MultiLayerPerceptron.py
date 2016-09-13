@@ -15,6 +15,8 @@ class MLP(object):
             layers.append(layer)
         layers.append(n_classes)
         self.weights = self.initialize_weights(layers)
+        self.input_dim = input_dim
+        self.n_classes = n_classes
         self.x = tf.placeholder(tf.float32, shape=[None, input_dim])
         self.y = tf.placeholder(tf.float32, shape=[None, n_classes])
         self.reg = tf.placeholder(tf.float32)
@@ -46,6 +48,14 @@ class MLP(object):
             all_weights['W' + str(i)] = tf.Variable(tf.truncated_normal(shape=[layers[i-1], layers[i]], stddev=0.1))
             all_weights['b' + str(i)] = tf.Variable(tf.constant(0.1, dtype=tf.float32, shape=[layers[i]]))
         return all_weights
+
+    def score(self, trX, trY, reg=1e-4):
+        result = self.sess.run([self.cost, self.accuracy], feed_dict={self.x: trX, self.y: trY, self.reg: reg})
+        return result
+
+    def predict(self, trX):
+        pred = self.sess.run([self.y_pred], feed_dict={self.x: trX})
+        return np.array(pred).reshape([-1, self.n_classes])
 
     def train(self, trX, trY, learning_rate=1e-3, batch_size=100, reg=1e-4, n_iters=1000):
         train_step = tf.train.AdamOptimizer(learning_rate).minimize(self.cost)
