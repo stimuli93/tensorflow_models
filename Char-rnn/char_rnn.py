@@ -3,28 +3,40 @@ import tensorflow as tf
 
 
 class CharRNN(object):
-    def __init__(self, max_seq_length, vocab_size, hidden_size=32, embedding_size=16, batch_size=32):
-
+    def __init__(self, max_seq_length, vocab_size, hidden_size=32, embedding_size=16, num_layers=2, batch_size=32):
+        """
+        Multi-layer LSTM for character modelling
+        :param max_seq_length: length of a feature vector
+        :param vocab_size: number of unique characters in dataset
+        :param hidden_size: size of layers of lstm
+        :param embedding_size: size of embedding vector per character
+        :param num_layers: number of lstm layers
+        :param batch_size: number of training examples trained at once
+        """
         self.batch_size = batch_size
         self.max_seq_length = max_seq_length
         self.embedding_size = embedding_size
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
+        self.num_layers = num_layers
 
+        # Initializing model parameters
         self.weights = self.initialize_weights(vocab_size, hidden_size, embedding_size)
         self.x = tf.placeholder(tf.int32, shape=[batch_size, max_seq_length])
         self.y = tf.placeholder(tf.int32, shape=[batch_size, max_seq_length])
 
         token_embeddings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
 
-        self.cell = tf.nn.rnn_cell.BasicLSTMCell(hidden_size, state_is_tuple=True)
-        state = self.cell.zero_state(batch_size, tf.float32)
-        outputs = []
-        for i in range(max_seq_length):
-            if i > 0:
-                tf.get_variable_scope().reuse_variables()
-            output, state = self.cell(token_embeddings[:, i, :], state)
-            outputs.append(output)
+        with tf.variable_scope("lstm") as scope:
+            cell = tf.nn.rnn_cell.BasicLSTMCell(hidden_size, state_is_tuple=True)
+            self.cell = tf.nn.rnn_cell.MultiRNNCell([cell] * num_layers, state_is_tuple=True)
+            state = self.cell.zero_state(batch_size, tf.float32)
+            outputs = []
+            for i in range(max_seq_length):
+                if i > 0:
+                    scope.reuse_variables()
+                output, state = self.cell(token_embeddings[:, i, :], state)
+                outputs.append(output)
         outputs = tf.reshape(tf.concat(1, outputs), [-1, hidden_size])
         logits = tf.matmul(outputs, self.weights['W1']) + self.weights['b1']
         loss = tf.nn.seq2seq.sequence_loss_by_example(
