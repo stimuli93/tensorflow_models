@@ -1,9 +1,11 @@
 import numpy as np
 import tensorflow as tf
+import os
 
 
 class CharRNN(object):
-    def __init__(self, max_seq_length, vocab_size, hidden_size=32, embedding_size=16, num_layers=2, batch_size=32):
+    def __init__(self, max_seq_length, vocab_size, hidden_size=32, embedding_size=16, num_layers=2, batch_size=32,
+                 ckpt_dir="./ckpt_dir", summary_dir="/tmp/rnn_logs"):
         """
         Multi-layer LSTM for character modelling
         :param max_seq_length: length of a feature vector
@@ -12,6 +14,8 @@ class CharRNN(object):
         :param embedding_size: size of embedding vector per character
         :param num_layers: number of lstm layers
         :param batch_size: number of training examples trained at once
+        :param ckpt_dir: directory in which model checkpoints to be stored
+        :param summary_dir: directory used as logdir for tensoboard visualization
         """
         self.batch_size = batch_size
         self.max_seq_length = max_seq_length
@@ -19,6 +23,8 @@ class CharRNN(object):
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
         self.num_layers = num_layers
+        self.ckpt_dir = ckpt_dir
+        self.summary_dir = summary_dir
 
         # Initializing model parameters
         self.weights = self.initialize_weights(vocab_size, hidden_size, embedding_size)
@@ -27,16 +33,15 @@ class CharRNN(object):
 
         token_embeddings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
 
-        with tf.variable_scope("lstm") as scope:
-            cell = tf.nn.rnn_cell.BasicLSTMCell(hidden_size, state_is_tuple=True)
-            self.cell = tf.nn.rnn_cell.MultiRNNCell([cell] * num_layers, state_is_tuple=True)
-            state = self.cell.zero_state(batch_size, tf.float32)
-            outputs = []
-            for i in range(max_seq_length):
-                if i > 0:
-                    scope.reuse_variables()
-                output, state = self.cell(token_embeddings[:, i, :], state)
-                outputs.append(output)
+        cell = tf.nn.rnn_cell.BasicLSTMCell(hidden_size, state_is_tuple=True)
+        self.cell = tf.nn.rnn_cell.MultiRNNCell([cell] * num_layers, state_is_tuple=True)
+        state = self.cell.zero_state(batch_size, tf.float32)
+        outputs = []
+        for i in range(max_seq_length):
+            if i > 0:
+                tf.get_variable_scope().reuse_variables()
+            output, state = self.cell(token_embeddings[:, i, :], state)
+            outputs.append(output)
         outputs = tf.reshape(tf.concat(1, outputs), [-1, hidden_size])
         logits = tf.matmul(outputs, self.weights['W1']) + self.weights['b1']
         loss = tf.nn.seq2seq.sequence_loss_by_example(
@@ -45,6 +50,21 @@ class CharRNN(object):
             [tf.ones([batch_size * max_seq_length], dtype=tf.float32)])
         self.cost = tf.reduce_sum(loss) / batch_size
         self.sess = tf.InteractiveSession()
+
+        cost_summ = tf.scalar_summary("loss ", self.cost)
+
+        # Merge all the summaries and write them out to summary_dir
+        self.merged = tf.merge_all_summaries()
+        self.writer = tf.train.SummaryWriter(self.summary_dir, self.sess.graph)
+
+        if not os.path.exists(self.ckpt_dir):
+            os.makedirs(self.ckpt_dir)
+
+        self.global_step = tf.Variable(0, name='global_step', trainable=False)
+
+        # Call this after declaring all tf.Variables.
+        self.saver = tf.train.Saver()
+
         self.sess.run(tf.initialize_all_variables())
 
     def initialize_weights(self, vocab_size, hidden_size, embedding_size):
@@ -78,7 +98,7 @@ class CharRNN(object):
             probabilities = tf.matmul(output, self.weights['W1']) + self.weights['b1']
 
             pred_id = tf.multinomial(probabilities, num_samples=1)
-            pred_id = tf.reshape(pred_id, shape=[1]).eval()
+            pred_id = self.sess.run(tf.reshape(pred_id, shape=[1]))
             char_embedding = tf.reshape(tf.nn.embedding_lookup(self.weights['W_vocab'], pred_id),
                                         shape=[-1, self.embedding_size])
             output, state = self.cell(char_embedding, state)
@@ -98,6 +118,15 @@ class CharRNN(object):
 
         init_new_vars_op = tf.initialize_variables(uninitialized_vars)
         self.sess.run(init_new_vars_op)
+
+        # restore model
+        ckpt = tf.train.get_checkpoint_state(self.ckpt_dir)
+        if ckpt and ckpt.model_checkpoint_path:
+            print(ckpt.model_checkpoint_path)
+            self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
+
+        start = self.global_step.eval()  # get last global_step
+
         for iteration in range(n_iters):
             batches = np.random.randint(len(X)-self.max_seq_length, size=self.batch_size)
             trX = []
@@ -108,6 +137,15 @@ class CharRNN(object):
             trX = np.array(trX)
             trY = np.array(trY)
             self.sess.run([train_step], feed_dict={self.x: trX, self.y: trY})
+
             if iteration % 10 == 0:
-                cost = self.sess.run([self.cost], feed_dict={self.x: trX, self.y: trY})
-                print 'Loss at iteration %s is: %s' % (iteration, cost)
+                result = self.sess.run([self.merged, self.cost],
+                                       feed_dict={self.x: trX, self.y: trY})
+                summary_str = result[0]
+                loss = result[1]
+                self.writer.add_summary(summary_str, iteration + start)
+                print("Loss at step %s: %s" % (iteration + start, loss))
+                if iteration % 100 == 0:
+                    self.global_step.assign(iteration + start).eval()  # set and update(eval) global_step with index, i
+                    self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
+
