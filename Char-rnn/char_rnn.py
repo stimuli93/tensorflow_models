@@ -145,7 +145,7 @@ class CharRNN(object):
                 loss = result[1]
                 self.writer.add_summary(summary_str, iteration + start)
                 print("Loss at step %s: %s" % (iteration + start, loss))
-                if iteration % 100 == 0:
-                    self.global_step.assign(iteration + start).eval()  # set and update(eval) global_step with index, i
-                    self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
+                
+        self.global_step.assign(n_iters + start).eval()  # set and update(eval) global_step with index, i
+        self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
 
