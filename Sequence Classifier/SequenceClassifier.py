@@ -28,8 +28,9 @@ class LstmClassifier(object):
         self.ckpt_dir = ckpt_dir
         self.summary_dir = summary_dir
 
-        token_embedings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
-        token_embedings = tf.nn.dropout(token_embedings, keep_prob=self.keep_prob)
+        with tf.variable_scope("embeddings"):
+            token_embedings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
+            token_embedings = tf.nn.dropout(token_embedings, keep_prob=self.keep_prob)
 
         with tf.variable_scope("lstm") as scope:
             self.cell = tf.nn.rnn_cell.DropoutWrapper(tf.nn.rnn_cell.LSTMCell(hidden_size, state_is_tuple=True,
@@ -49,17 +50,20 @@ class LstmClassifier(object):
             self.final_state = states[-1]
             self.final_output = outputs[-1]
 
-        self.y_pred = tf.nn.softmax(tf.matmul(self.final_state[0], self.weights['W']) + self.weights['b']) + 1e-8
-        self.cost = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.y_pred), reduction_indices=[1]))
+        with tf.variable_scope("loss"):
+            self.y_pred = tf.nn.softmax(tf.matmul(self.final_state[0], self.weights['W']) + self.weights['b']) + 1e-8
+            self.cost = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.y_pred), reduction_indices=[1]))
 
-        correct_prediction = tf.equal(tf.argmax(self.y_pred, 1), tf.argmax(self.y, 1))
-        self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+        with tf.variable_scope("accuracy"):
+            correct_prediction = tf.equal(tf.argmax(self.y_pred, 1), tf.argmax(self.y, 1))
+            self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
         self.sess = tf.InteractiveSession()
 
         cost_summ = tf.scalar_summary("loss ", self.cost)
         accuracy_summary = tf.scalar_summary("accuracy", self.accuracy)
 
-        # Merge all the summaries and write them out to /tmp/convClf_logs
+        # Merge all the summaries and write them out to summary_dir
         self.merged = tf.merge_all_summaries()
         self.writer = tf.train.SummaryWriter(self.summary_dir, self.sess.graph)
 
@@ -76,9 +80,10 @@ class LstmClassifier(object):
 
     def _initialize_weights(self, vocab_size, num_classes, embedding_size, hidden_size):
         all_weights = dict()
-        all_weights['W_vocab'] = tf.Variable(tf.truncated_normal(shape=[vocab_size, embedding_size], stddev=0.1))
-        all_weights['W'] = tf.Variable(tf.truncated_normal(shape=[hidden_size, num_classes], stddev=0.1))
-        all_weights['b'] = tf.Variable(tf.constant(0.1, dtype=tf.float32, shape=[num_classes]))
+        all_weights['W_vocab'] = tf.Variable(tf.truncated_normal(shape=[vocab_size, embedding_size], stddev=0.1),
+                                             name="W_vocab")
+        all_weights['W'] = tf.Variable(tf.truncated_normal(shape=[hidden_size, num_classes], stddev=0.1), name="W")
+        all_weights['b'] = tf.Variable(tf.constant(0.1, dtype=tf.float32, shape=[num_classes]), name="b")
         return all_weights
 
     def score(self, X, y):
@@ -149,6 +154,6 @@ class LstmClassifier(object):
                 loss = result[1]
                 self.writer.add_summary(summary_str, i + start)
                 print("Loss at step %s: %s" % (i + start, loss))
-                if i % 100 == 0:
-                    self.global_step.assign(i + start).eval()  # set and update(eval) global_step with index, i
-                    self.saver.save(self.sess, self.ckpt_dir+"/model.ckpt", global_step=self.global_step)
+
+        self.global_step.assign(n_iters + start).eval()
+        self.saver.save(self.sess, self.ckpt_dir+"/model.ckpt", global_step=self.global_step)
