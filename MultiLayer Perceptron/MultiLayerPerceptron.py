@@ -20,35 +20,38 @@ class MLP(object):
         self.weights = self.initialize_weights(layers)
         self.input_dim = input_dim
         self.n_classes = n_classes
-        self.x = tf.placeholder(tf.float32, shape=[None, input_dim])
-        self.y = tf.placeholder(tf.float32, shape=[None, n_classes])
-        self.reg = tf.placeholder(tf.float32)
+        self.x = tf.placeholder(tf.float32, shape=[None, input_dim], name="X")
+        self.y = tf.placeholder(tf.float32, shape=[None, n_classes], name="y")
+        self.reg = tf.placeholder(tf.float32, name="reg")
         self.ckpt_dir = ckpt_dir
         self.summary_dir = summary_dir
 
-        prev_layer = self.x
-        n_layers = len(layers)
-        for i in range(1, n_layers-1):
-            prev_layer = tf.nn.relu(tf.matmul(prev_layer, self.weights['W'+str(i)]) + self.weights['b' + str(i)])
+        with tf.variable_scope("neural-net"):
+            prev_layer = self.x
+            n_layers = len(layers)
+            for i in range(1, n_layers-1):
+                prev_layer = tf.nn.relu(tf.matmul(prev_layer, self.weights['W'+str(i)]) + self.weights['b' + str(i)])
 
-        i = n_layers-1
-        self.y_pred = tf.nn.softmax(tf.matmul(prev_layer, self.weights['W'+str(i)]) + self.weights['b' + str(i)])
+            i = n_layers-1
+            self.y_pred = tf.nn.softmax(tf.matmul(prev_layer, self.weights['W'+str(i)]) + self.weights['b' + str(i)])
 
-        reg_loss = 0.0
-        for i in range(1, n_layers):
-            reg_loss += tf.reduce_sum(self.weights['W' + str(i)] * self.weights['W' + str(i)])
+        with tf.variable_scope("loss"):
+            reg_loss = 0.0
+            for i in range(1, n_layers):
+                reg_loss += tf.reduce_sum(self.weights['W' + str(i)] ** 2)
 
-        reg_loss *= self.reg
-        self.cost = tf.reduce_mean(-tf.reduce_sum(self.y*tf.log(self.y_pred), reduction_indices=[1])) + reg_loss
+            reg_loss *= self.reg
+            self.cost = tf.reduce_mean(-tf.reduce_sum(self.y*tf.log(self.y_pred), reduction_indices=[1])) + reg_loss
 
-        correct_prediction = tf.equal(tf.argmax(self.y_pred, 1), tf.argmax(self.y, 1))
-        self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+        with tf.variable_scope("accuracy"):
+            correct_prediction = tf.equal(tf.argmax(self.y_pred, 1), tf.argmax(self.y, 1))
+            self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
         self.sess = tf.InteractiveSession()
-
         cost_summ = tf.scalar_summary("loss ", self.cost)
         accuracy_summary = tf.scalar_summary("accuracy", self.accuracy)
 
-        # Merge all the summaries and write them out to /tmp/convClf_logs
+        # Merge all the summaries and write them out to summary_dir
         self.merged = tf.merge_all_summaries()
         self.writer = tf.train.SummaryWriter(self.summary_dir, self.sess.graph)
 
@@ -67,8 +70,10 @@ class MLP(object):
         n_layers = len(layers)
         all_weights = dict()
         for i in range(1, n_layers):
-            all_weights['W' + str(i)] = tf.Variable(tf.truncated_normal(shape=[layers[i-1], layers[i]], stddev=0.1))
-            all_weights['b' + str(i)] = tf.Variable(tf.constant(0.1, dtype=tf.float32, shape=[layers[i]]))
+            all_weights['W' + str(i)] = tf.Variable(tf.truncated_normal(shape=[layers[i-1], layers[i]], stddev=0.1),
+                                                    name='W'+str(i))
+            all_weights['b' + str(i)] = tf.Variable(tf.constant(0.1, dtype=tf.float32, shape=[layers[i]]),
+                                                    name='b'+str(i))
         return all_weights
 
     def score(self, trX, trY, reg=1e-4):
@@ -123,7 +128,6 @@ class MLP(object):
                 loss = result[1]
                 self.writer.add_summary(summary_str, i + start)
                 print("Loss at step %s: %s" % (i + start, loss))
-                if i % 100 == 0:
-                    self.global_step.assign(i + start).eval()  # set and update(eval) global_step with index, i
-                    self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
 
+        self.global_step.assign(i + start).eval()  # set and update(eval) global_step with index, i
+        self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
