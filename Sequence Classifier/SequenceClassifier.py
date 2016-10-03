@@ -4,7 +4,7 @@ import os
 
 
 class LstmClassifier(object):
-    def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128,
+    def __init__(self, vocab_size, num_classes, max_seq_length, embedding_size=128, hidden_size=128, num_layers=2,
                  batch_size=50, ckpt_dir="./ckpt_dir", summary_dir="/tmp/lstmClf_logs"):
         """
         :param vocab_size: vocabulary size
@@ -12,6 +12,7 @@ class LstmClassifier(object):
         :param max_seq_length: number of words in a single training example
         :param embedding_size: size of embedding
         :param hidden_size: size of hidden unit of lstm
+        :param num_layers: number of layers in lstm
         :param batch_size: no. of training samples to be trained in one iteration
         :param ckpt_dir: directory in which model checkpoints to be stored
         :param summary_dir: directory used as logdir for tensoboard visualization
@@ -27,15 +28,16 @@ class LstmClassifier(object):
         self.num_classes = num_classes
         self.ckpt_dir = ckpt_dir
         self.summary_dir = summary_dir
+        self.num_layers = num_layers
 
         with tf.variable_scope("embeddings"):
             token_embedings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
             token_embedings = tf.nn.dropout(token_embedings, keep_prob=self.keep_prob)
 
         with tf.variable_scope("lstm") as scope:
-            self.cell = tf.nn.rnn_cell.DropoutWrapper(tf.nn.rnn_cell.LSTMCell(hidden_size, state_is_tuple=True,
-                                                                              use_peepholes=True),
-                                                      output_keep_prob=self.keep_prob)
+            cell = tf.nn.rnn_cell.DropoutWrapper(tf.nn.rnn_cell.BasicLSTMCell(hidden_size, state_is_tuple=True),
+                                                 output_keep_prob=self.keep_prob)
+            self.cell = tf.nn.rnn_cell.MultiRNNCell([cell]*num_layers, state_is_tuple=True)
             initial_state = self.cell.zero_state(batch_size, tf.float32)
 
             outputs = []
@@ -51,7 +53,7 @@ class LstmClassifier(object):
             self.final_output = outputs[-1]
 
         with tf.variable_scope("loss"):
-            self.y_pred = tf.nn.softmax(tf.matmul(self.final_state[0], self.weights['W']) + self.weights['b']) + 1e-8
+            self.y_pred = tf.nn.softmax(tf.matmul(self.final_state[num_layers-1][0], self.weights['W']) + self.weights['b']) + 1e-8
             self.cost = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.y_pred), reduction_indices=[1]))
 
         with tf.variable_scope("accuracy"):
