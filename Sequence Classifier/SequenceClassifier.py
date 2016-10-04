@@ -18,11 +18,11 @@ class LstmClassifier(object):
         :param summary_dir: directory used as logdir for tensoboard visualization
         """
         self.weights = self._initialize_weights(vocab_size, num_classes, embedding_size, hidden_size)
-        self.x = tf.placeholder(tf.int32, shape=[None, max_seq_length])
-        self.y = tf.placeholder(tf.float32, shape=[None, num_classes])
+        self.x = tf.placeholder(tf.int32, shape=[None, max_seq_length], name='X')
+        self.y = tf.placeholder(tf.float32, shape=[None, num_classes], name='y')
 
         # keep_prob is less than 1.0 only during training
-        self.keep_prob = tf.placeholder(tf.float32)
+        self.keep_prob = tf.placeholder(tf.float32, name='keep_prob')
 
         self.batch_size = batch_size
         self.num_classes = num_classes
@@ -40,27 +40,25 @@ class LstmClassifier(object):
             self.cell = tf.nn.rnn_cell.MultiRNNCell([cell]*num_layers, state_is_tuple=True)
             initial_state = self.cell.zero_state(batch_size, tf.float32)
 
-            outputs = []
-            states = [initial_state]
+            state = initial_state
             for i in range(max_seq_length):
                 if i > 0:
                     scope.reuse_variables()
-                new_output, new_state = self.cell(token_embedings[:, i, :], states[-1])
-                outputs.append(new_output)
-                states.append(new_state)
+                _, state = self.cell(token_embedings[:, i, :], state)
 
-            self.final_state = states[-1]
-            self.final_output = outputs[-1]
+            self.final_state = state
 
         with tf.variable_scope("loss"):
-            self.y_pred = tf.nn.softmax(tf.matmul(self.final_state[num_layers-1][0], self.weights['W']) + self.weights['b']) + 1e-8
+            # adding 1e-8 to avoid log(0)
+            self.y_pred = tf.nn.softmax(tf.matmul(self.final_state[num_layers-1][0], self.weights['W']) +
+                                        self.weights['b']) + 1e-8
             self.cost = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.y_pred), reduction_indices=[1]))
 
         with tf.variable_scope("accuracy"):
             correct_prediction = tf.equal(tf.argmax(self.y_pred, 1), tf.argmax(self.y, 1))
             self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
-        self.sess = tf.InteractiveSession()
+        self.sess = tf.Session()
 
         cost_summ = tf.scalar_summary("loss ", self.cost)
         accuracy_summary = tf.scalar_summary("accuracy", self.accuracy)
@@ -144,7 +142,7 @@ class LstmClassifier(object):
             print(ckpt.model_checkpoint_path)
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
 
-        start = self.global_step.eval()  # get last global_step
+        start = self.sess.run(self.global_step)  # get last global_step
 
         for i in xrange(n_iters):
             batch = np.random.randint(trX.shape[0], size=self.batch_size)
@@ -156,6 +154,8 @@ class LstmClassifier(object):
                 loss = result[1]
                 self.writer.add_summary(summary_str, i + start)
                 print("Loss at step %s: %s" % (i + start, loss))
-
-        self.global_step.assign(n_iters + start).eval()
-        self.saver.save(self.sess, self.ckpt_dir+"/model.ckpt", global_step=self.global_step)
+                if i%100 == 0:
+                    self.sess.run(self.global_step.assign(start))
+                    self.saver.save(self.sess, self.ckpt_dir+"/model.ckpt", global_step=self.global_step)
+        self.sess.run(self.global_step.assign(n_iters + start))
+        self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
