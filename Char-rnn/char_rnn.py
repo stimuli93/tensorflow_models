@@ -4,51 +4,64 @@ import os
 
 
 class CharRNN(object):
-    def __init__(self, max_seq_length, vocab_size, hidden_size=32, embedding_size=16, num_layers=2, batch_size=32,
-                 ckpt_dir="./ckpt_dir", summary_dir="/tmp/rnn_logs"):
+    def __init__(self, max_seq_length, vocab_size, hidden_size=32, embedding_size=16, ckpt_dir="./ckpt_dir",
+                 summary_dir="/tmp/rnn_logs"):
         """
-        Multi-layer LSTM for character modelling
-        :param max_seq_length: length of a feature vector
+        2-layer LSTM for character modelling
+        :param max_seq_length: max length of sequence trained at once
         :param vocab_size: number of unique characters in dataset
         :param hidden_size: size of layers of lstm
         :param embedding_size: size of embedding vector per character
-        :param num_layers: number of lstm layers
-        :param batch_size: number of training examples trained at once
         :param ckpt_dir: directory in which model checkpoints to be stored
         :param summary_dir: directory used as logdir for tensoboard visualization
         """
-        self.batch_size = batch_size
+        num_layers = 2
         self.max_seq_length = max_seq_length
         self.embedding_size = embedding_size
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
-        self.num_layers = num_layers
         self.ckpt_dir = ckpt_dir
         self.summary_dir = summary_dir
 
         # Initializing model parameters
         self.weights = self.initialize_weights(vocab_size, hidden_size, embedding_size)
-        self.x = tf.placeholder(tf.int32, shape=[batch_size, max_seq_length])
-        self.y = tf.placeholder(tf.int32, shape=[batch_size, max_seq_length])
+        self.x = tf.placeholder(tf.int32, shape=[1, max_seq_length], name="X")
+        self.y = tf.placeholder(tf.int32, shape=[1, max_seq_length], name="y")
 
         token_embeddings = tf.nn.embedding_lookup(self.weights['W_vocab'], self.x)
 
         cell = tf.nn.rnn_cell.BasicLSTMCell(hidden_size, state_is_tuple=True)
         self.cell = tf.nn.rnn_cell.MultiRNNCell([cell] * num_layers, state_is_tuple=True)
-        state = self.cell.zero_state(batch_size, tf.float32)
+
+        self.lstm1_c = tf.placeholder(tf.float32, shape=[1, self.hidden_size], name="Lstm1_c")
+        self.lstm1_h = tf.placeholder(tf.float32, shape=[1, self.hidden_size], name="Lstm1_h")
+        self.lstm2_c = tf.placeholder(tf.float32, shape=[1, self.hidden_size], name="Lstm2_c")
+        self.lstm2_h = tf.placeholder(tf.float32, shape=[1, self.hidden_size], name="Lstm2_h")
+
+        state1 = tf.nn.rnn_cell.LSTMStateTuple(self.lstm1_c, self.lstm1_h)
+        state2 = tf.nn.rnn_cell.LSTMStateTuple(self.lstm2_c, self.lstm2_h)
+        state = (state1, state2)
+
         outputs = []
         for i in range(max_seq_length):
             if i > 0:
                 tf.get_variable_scope().reuse_variables()
             output, state = self.cell(token_embeddings[:, i, :], state)
             outputs.append(output)
+
+        final_state = state
+        self.final_lstm1_c = final_state[0].c
+        self.final_lstm1_h = final_state[0].h
+        self.final_lstm2_c = final_state[1].c
+        self.final_lstm2_h = final_state[1].h
+
         outputs = tf.reshape(tf.concat(1, outputs), [-1, hidden_size])
         logits = tf.matmul(outputs, self.weights['W1']) + self.weights['b1']
         loss = tf.nn.seq2seq.sequence_loss_by_example(
             [logits],
             [tf.reshape(self.y, [-1])],
-            [tf.ones([batch_size * max_seq_length], dtype=tf.float32)])
-        self.cost = tf.reduce_sum(loss) / batch_size
+            [tf.ones([1 * max_seq_length], dtype=tf.float32)])
+        self.cost = tf.reduce_sum(loss)
         self.sess = tf.InteractiveSession()
 
         cost_summ = tf.scalar_summary("loss ", self.cost)
@@ -105,7 +118,7 @@ class CharRNN(object):
             generated_text.append(pred_id[0])
         return generated_text
 
-    def train(self, X, learning_rate=1e-3, n_iters=1000):
+    def train(self, X, learning_rate=1e-3):
         train_step = tf.train.AdamOptimizer(learning_rate).minimize(self.cost)
 
         # initializing only un-initialized variables to prevent trained variables assigned again with random weights
@@ -126,26 +139,34 @@ class CharRNN(object):
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
 
         start = self.global_step.eval()  # get last global_step
+        x_len = len(X)
+        iterations = (x_len-1)//self.max_seq_length
+        lstm1_c = np.zeros([1, self.hidden_size])
+        lstm1_h = np.zeros([1, self.hidden_size])
+        lstm2_c = np.zeros([1, self.hidden_size])
+        lstm2_h = np.zeros([1, self.hidden_size])
 
-        for iteration in range(n_iters):
-            batches = np.random.randint(len(X)-self.max_seq_length, size=self.batch_size)
-            trX = []
-            trY = []
-            for i in batches:
-                trX.append(X[i:i+self.max_seq_length])
-                trY.append(X[i+1:i+1+self.max_seq_length])
-            trX = np.array(trX)
-            trY = np.array(trY)
-            self.sess.run([train_step], feed_dict={self.x: trX, self.y: trY})
+        for i in xrange(0, iterations):
+            iter_start = i*self.max_seq_length
+            trX = np.array(X[iter_start: iter_start+self.max_seq_length]).reshape([1, self.max_seq_length])
+            trY = np.array(X[iter_start+1: iter_start+self.max_seq_length+1]).reshape([1, self.max_seq_length])
+            feed_dict = {self.x: trX, self.y: trY,
+                         self.lstm1_c: lstm1_c, self.lstm1_h: lstm1_h, self.lstm2_c: lstm2_c, self.lstm2_h: lstm2_h}
+            lstm1_c, lstm1_h, lstm2_c, lstm2_h, _ = self.sess.run([self.final_lstm1_c, self.final_lstm1_h,
+                                                                   self.final_lstm2_c, self.final_lstm2_h, train_step],
+                                                                  feed_dict=feed_dict)
 
-            if iteration % 10 == 0:
+            if i % 10 == 0:
                 result = self.sess.run([self.merged, self.cost],
-                                       feed_dict={self.x: trX, self.y: trY})
+                                       feed_dict=feed_dict)
                 summary_str = result[0]
                 loss = result[1]
-                self.writer.add_summary(summary_str, iteration + start)
-                print("Loss at step %s: %s" % (iteration + start, loss))
-                
-        self.global_step.assign(n_iters + start).eval()  # set and update(eval) global_step with index, i
+                self.writer.add_summary(summary_str, i + start)
+                print("Loss at step %s: %s" % (i + start, loss))
+
+                self.global_step.assign(i + start).eval()  # set and update(eval) global_step
+                self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
+
+        self.global_step.assign(iterations + start).eval()  # set and update(eval) global_step
         self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
 
