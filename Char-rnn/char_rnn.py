@@ -118,7 +118,11 @@ class CharRNN(object):
             generated_text.append(pred_id[0])
         return generated_text
 
-    def train(self, X, learning_rate=1e-3):
+    def train(self, X, learning_rate=1e-3, nb_epochs=1):
+        """
+        train method expects X to be the complete text to be trained upon with the specified
+        learning_rate for nb_epochs.
+        """
         train_step = tf.train.AdamOptimizer(learning_rate).minimize(self.cost)
 
         # initializing only un-initialized variables to prevent trained variables assigned again with random weights
@@ -138,35 +142,42 @@ class CharRNN(object):
             print(ckpt.model_checkpoint_path)
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)  # restore all variables
 
-        start = self.global_step.eval()  # get last global_step
-        x_len = len(X)
-        iterations = (x_len-1)//self.max_seq_length
-        lstm1_c = np.zeros([1, self.hidden_size])
-        lstm1_h = np.zeros([1, self.hidden_size])
-        lstm2_c = np.zeros([1, self.hidden_size])
-        lstm2_h = np.zeros([1, self.hidden_size])
+        for ep in range(nb_epochs):
+            start = self.global_step.eval()  # get last global_step
+            x_len = len(X)
+            hidden_size = self.hidden_size
+            max_seq_length = self.max_seq_length
 
-        for i in xrange(0, iterations):
-            iter_start = i*self.max_seq_length
-            trX = np.array(X[iter_start: iter_start+self.max_seq_length]).reshape([1, self.max_seq_length])
-            trY = np.array(X[iter_start+1: iter_start+self.max_seq_length+1]).reshape([1, self.max_seq_length])
-            feed_dict = {self.x: trX, self.y: trY,
-                         self.lstm1_c: lstm1_c, self.lstm1_h: lstm1_h, self.lstm2_c: lstm2_c, self.lstm2_h: lstm2_h}
-            lstm1_c, lstm1_h, lstm2_c, lstm2_h, _ = self.sess.run([self.final_lstm1_c, self.final_lstm1_h,
-                                                                   self.final_lstm2_c, self.final_lstm2_h, train_step],
-                                                                  feed_dict=feed_dict)
+            iterations = (x_len-1)//max_seq_length
+            print 'Performing %d iterations in 1 epoch' % iterations
 
-            if i % 10 == 0:
-                result = self.sess.run([self.merged, self.cost],
-                                       feed_dict=feed_dict)
-                summary_str = result[0]
-                loss = result[1]
-                self.writer.add_summary(summary_str, i + start)
-                print("Loss at step %s: %s" % (i + start, loss))
+            # Assigning lstm parameters to 0 only at start of the epoch
+            lstm1_c = np.zeros([1, hidden_size])
+            lstm1_h = np.zeros([1, hidden_size])
+            lstm2_c = np.zeros([1, hidden_size])
+            lstm2_h = np.zeros([1, hidden_size])
 
-                self.global_step.assign(i + start).eval()  # set and update(eval) global_step
-                self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
+            for i in xrange(0, iterations):
+                iter_start = i*max_seq_length
+                trX = np.array(X[iter_start: iter_start+max_seq_length]).reshape([1, max_seq_length])
+                trY = np.array(X[iter_start+1: iter_start+max_seq_length+1]).reshape([1, max_seq_length])
+                feed_dict = {self.x: trX, self.y: trY,
+                             self.lstm1_c: lstm1_c, self.lstm1_h: lstm1_h, self.lstm2_c: lstm2_c, self.lstm2_h: lstm2_h}
+                lstm1_c, lstm1_h, lstm2_c, lstm2_h, _ = self.sess.run([self.final_lstm1_c, self.final_lstm1_h,
+                                                                       self.final_lstm2_c, self.final_lstm2_h,
+                                                                       train_step], feed_dict=feed_dict)
 
-        self.global_step.assign(iterations + start).eval()  # set and update(eval) global_step
-        self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
+                if i % 10 == 0:
+                    result = self.sess.run([self.merged, self.cost],
+                                           feed_dict=feed_dict)
+                    summary_str = result[0]
+                    loss = result[1]
+                    self.writer.add_summary(summary_str, i + start)
+                    print("Loss at step %s: %s" % (i + start, loss))
+                    if i % 500 == 0:
+                        self.global_step.assign(i + start).eval()  # set and update(eval) global_step
+                        self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
+
+            self.global_step.assign(iterations + start).eval()  # set and update(eval) global_step
+            self.saver.save(self.sess, self.ckpt_dir + "/model.ckpt", global_step=self.global_step)
 
